@@ -1,151 +1,122 @@
 import streamlit as st
+import numpy as np
 import pandas as pd
-import math
-from pathlib import Path
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
+# Optional sklearn import
+try:
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import mean_squared_error
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+
+# ----------------------------
+# Streamlit App Config
+# ----------------------------
+st.set_page_config(page_title="Genomic Annotation Reproducibility", layout="wide")
+st.title("🔬 Genetic Mutation Annotation Explorer")
+
+# ----------------------------
+# Sidebar: Controls
+# ----------------------------
+st.sidebar.header("Simulation / Upload Controls")
+
+# File upload
+uploaded_file = st.sidebar.file_uploader(
+    "Upload CSV of annotations (Mutations x Researchers). Do NOT upload private data.", 
+    type=["csv"]
 )
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# Simulation controls (used if no file uploaded)
+num_samples = st.sidebar.slider("Number of Mutations", 20, 500, 100)
+raters = st.sidebar.slider("Number of Researchers", 2, 10, 5)
+noise_scale = st.sidebar.slider("Annotation Noise Level", 0.01, 0.5, 0.1)
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+# Model selection
+models = ["NumPy Linear Regression"]
+if SKLEARN_AVAILABLE:
+    models.append("Random Forest (scikit-learn)")
+model_choice = st.sidebar.selectbox("Model", models)
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+# ----------------------------
+# Data Preparation
+# ----------------------------
+if uploaded_file is not None:
+    annotation_data = pd.read_csv(uploaded_file)
+    st.subheader("📄 Uploaded Data Preview")
+    st.dataframe(annotation_data.head())
+else:
+    np.random.seed(42)
+    data = {"Mutation_ID": np.arange(1, num_samples + 1)}
+    for i in range(1, raters + 1):
+        data[f"Researcher_{i}"] = np.random.normal(0.5, noise_scale, num_samples)
+    annotation_data = pd.DataFrame(data)
+    st.subheader("📄 Simulated Data Preview")
+    st.dataframe(annotation_data.head())
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+# Ensure numeric columns only for analysis
+numeric_data = annotation_data.select_dtypes(include=[np.number])
+if numeric_data.shape[1] < 2:
+    st.error("Dataset must have at least 1 Mutation ID column and 1 annotator column.")
+    st.stop()
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+# ----------------------------
+# ICC Calculation
+# ----------------------------
+def icc(data):
+    mean_annotations = data.mean(axis=1)
+    rater_var = data.var(axis=1).mean()
+    total_var = mean_annotations.var()
+    return (total_var - rater_var) / total_var if total_var > 0 else 0
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+icc_value = icc(numeric_data.iloc[:, 1:])
+st.subheader("📊 Intraclass Correlation Coefficient (ICC)")
+st.metric("ICC Score", f"{icc_value:.4f}")
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+# ----------------------------
+# Annotator Mean Chart
+# ----------------------------
+mean_scores = numeric_data.iloc[:, 1:].mean()
+st.subheader("📈 Average Annotation Scores by Researcher")
+st.bar_chart(mean_scores)
 
-    return gdp_df
+# ----------------------------
+# NumPy Linear Regression
+# ----------------------------
+def numpy_linear_regression(X_train, y_train, X_test):
+    X_train_bias = np.c_[np.ones(X_train.shape[0]), X_train]
+    X_test_bias = np.c_[np.ones(X_test.shape[0]), X_test]
+    beta = np.linalg.pinv(X_train_bias.T @ X_train_bias) @ X_train_bias.T @ y_train
+    return X_test_bias @ beta
 
-gdp_df = get_gdp_data()
+# ----------------------------
+# Model Training Across Annotators
+# ----------------------------
+st.subheader("🤖 Model Performance vs Number of Annotators")
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+errors = []
+num_raters_list = range(1, numeric_data.shape[1])
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
+for num in num_raters_list:
+    X = numeric_data.iloc[:, 1:num+1].values
+    y = X.mean(axis=1)
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
+    split = int(len(X) * 0.8)
+    X_train, X_test = X[:split], X[split:]
+    y_train, y_test = y[:split], y[split:]
 
-# Add some spacing
-''
-''
+    if model_choice == "NumPy Linear Regression":
+        preds = numpy_linear_regression(X_train, y_train, X_test)
+        mse = np.mean((y_test - preds) ** 2)
+    elif model_choice == "Random Forest (scikit-learn)":
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        preds = model.predict(X_test)
+        mse = mean_squared_error(y_test, preds)
 
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
+    errors.append(mse)
 
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+results_df = pd.DataFrame({"Annotators": list(num_raters_list), "MSE": errors})
+st.line_chart(results_df, x="Annotators", y="MSE")
+st.dataframe(results_df)
