@@ -1,6 +1,8 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import psutil
+import os
 
 # Optional sklearn import
 try:
@@ -10,6 +12,23 @@ try:
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
+
+# ----------------------------
+# Monitoring Utility
+# ----------------------------
+def display_performance_metrics():
+    """Captures and displays real-time resource usage."""
+    process = psutil.Process(os.getpid())
+    # Memory in MB
+    mem_mb = process.memory_info().rss / (1024 * 1024)
+    # CPU usage (shorter interval for data apps)
+    cpu_percent = process.cpu_percent(interval=0.1)
+    
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🖥️ Resource Monitor")
+    m1, m2 = st.sidebar.columns(2)
+    m1.metric("CPU Load", f"{cpu_percent}%")
+    m2.metric("RAM Usage", f"{mem_mb:.1f} MB")
 
 # ----------------------------
 # Streamlit App Config
@@ -38,6 +57,9 @@ models = ["NumPy Linear Regression"]
 if SKLEARN_AVAILABLE:
     models.append("Random Forest (scikit-learn)")
 model_choice = st.sidebar.selectbox("Model", models)
+
+# Inject Resource Monitor into Sidebar
+display_performance_metrics()
 
 # ----------------------------
 # Data Preparation
@@ -85,6 +107,7 @@ st.bar_chart(mean_scores)
 # NumPy Linear Regression
 # ----------------------------
 def numpy_linear_regression(X_train, y_train, X_test):
+    # Using the normal equation: beta = (X^T * X)^-1 * X^T * y
     X_train_bias = np.c_[np.ones(X_train.shape[0]), X_train]
     X_test_bias = np.c_[np.ones(X_test.shape[0]), X_test]
     beta = np.linalg.pinv(X_train_bias.T @ X_train_bias) @ X_train_bias.T @ y_train
@@ -120,3 +143,9 @@ for num in num_raters_list:
 results_df = pd.DataFrame({"Annotators": list(num_raters_list), "MSE": errors})
 st.line_chart(results_df, x="Annotators", y="MSE")
 st.dataframe(results_df)
+
+st.markdown("""
+---
+### Understanding ICC and Reproducibility
+The **Intraclass Correlation Coefficient (ICC)** measures how much of the total variation in scores is due to actual differences between mutations versus "noise" from researcher subjectivity.
+""")
