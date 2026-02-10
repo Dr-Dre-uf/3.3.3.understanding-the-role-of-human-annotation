@@ -33,7 +33,7 @@ def display_performance_metrics():
 # Streamlit App Config
 # ----------------------------
 st.set_page_config(page_title="Radiology AI Reliability", layout="wide")
-st.title("🩻 Radiology AI Reliability: Lung Cancer Detection")
+st.title("Radiology AI Reliability: Lung Cancer Detection")
 
 # --- PRIVACY WARNING ---
 st.warning("""
@@ -146,7 +146,7 @@ with col2:
 # Identify Ambiguous Images
 # ----------------------------
 st.markdown("---")
-st.subheader("🔍 Review High-Disagreement Images")
+st.subheader("Review High-Disagreement Images")
 st.write("The X-rays below have the highest variance in diagnosis (e.g., split decisions). These are candidates for expert re-review.")
 
 # Calculate variance per row (image)
@@ -161,7 +161,7 @@ st.dataframe(high_disagreement.style.background_gradient(subset=['Disagreement_S
 # Model Performance Analysis
 # ----------------------------
 st.markdown("---")
-st.subheader("🤖 AI Model Performance vs. Number of Radiologists")
+st.subheader("AI Model Performance vs. Number of Radiologists")
 st.write("This curve shows how adding more radiologists to the consensus label improves the AI's ability to detect cancer.")
 
 if not SKLEARN_AVAILABLE:
