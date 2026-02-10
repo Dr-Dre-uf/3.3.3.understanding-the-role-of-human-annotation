@@ -34,6 +34,14 @@ def display_performance_metrics():
 st.set_page_config(page_title="Genomic Annotation Reproducibility", layout="wide")
 st.title("Biomedical Annotation Reliability Explorer")
 
+# --- PRIVACY WARNING ---
+st.warning("""
+**DATA PRIVACY NOTICE**: 
+This application is for demonstration and research simulation purposes only. 
+**Do not upload** any Personally Identifiable Information (PII), Protected Health Information (PHI), or any confidential patient data. 
+Ensure all datasets are fully anonymized before uploading.
+""")
+
 st.markdown("""
 ### Instructions
 1. **Configure Parameters**: Use the sidebar to adjust the number of mutations and researchers for the simulation.
@@ -46,11 +54,11 @@ st.markdown("""
 # ----------------------------
 st.sidebar.header("Control Panel")
 
-# File upload with tooltip
+# File upload with STRICT privacy warning in help text
 uploaded_file = st.sidebar.file_uploader(
     "Upload Annotation CSV", 
     type=["csv"],
-    help="Upload a CSV where rows are mutations and columns are researcher scores. Ensure data is anonymized."
+    help="Upload a CSV where rows are mutations and columns are researcher scores. STRICTLY NO PII/PHI DATA."
 )
 
 # Simulation controls
@@ -151,6 +159,4 @@ st.markdown("""
 ---
 ### Scientific Context
 The **Intraclass Correlation Coefficient (ICC)** is a descriptive statistic that can be used when quantitative measurements are made on units that are organized into groups. It describes how strongly units in the same group resemble each other. In this app, it quantifies the degree to which different researchers agree on the mutation scores. 
-
-
 """)
