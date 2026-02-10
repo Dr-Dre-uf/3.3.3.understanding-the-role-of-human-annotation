@@ -193,8 +193,9 @@ else:
         # In a real app, you'd load image embeddings. Here we simulate features with noise.
         # We generate features based on the CONSENSUS label to simulate learning "what the doctors say"
         np.random.seed(i) # varying seed
-        # Synthetic features: 10 features, some correlated with y_consensus
-        X_features = np.random.normal(loc=y_consensus[:, None], scale=1.5, size=(num_samples, 10))
+        
+        # FIX: We use .values before reshaping to avoid Pandas indexing errors
+        X_features = np.random.normal(loc=y_consensus.values[:, None], scale=1.5, size=(num_samples, 10))
         
         # Split
         X_train, X_test, y_train, y_test = train_test_split(X_features, y_true_proxy, test_size=0.3, random_state=42)
