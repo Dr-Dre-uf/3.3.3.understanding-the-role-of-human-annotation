@@ -3,12 +3,13 @@ import numpy as np
 import pandas as pd
 import psutil
 import os
+import matplotlib.pyplot as plt
 
 # Optional sklearn import
 try:
-    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import train_test_split
-    from sklearn.metrics import mean_squared_error
+    from sklearn.metrics import accuracy_score
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
@@ -31,8 +32,8 @@ def display_performance_metrics():
 # ----------------------------
 # Streamlit App Config
 # ----------------------------
-st.set_page_config(page_title="Genomic Annotation Reproducibility", layout="wide")
-st.title("Biomedical Annotation Reliability Explorer")
+st.set_page_config(page_title="Radiology AI Reliability", layout="wide")
+st.title("🩻 Radiology AI Reliability: Lung Cancer Detection")
 
 # --- PRIVACY WARNING ---
 st.warning("""
@@ -43,34 +44,35 @@ Ensure all datasets are fully anonymized before uploading.
 """)
 
 st.markdown("""
-### Instructions
-1. **Configure Parameters**: Use the sidebar to adjust the number of mutations and researchers for the simulation.
-2. **Review Consistency**: Analyze the **Intraclass Correlation Coefficient (ICC)** to determine inter-rater reliability.
-3. **Evaluate Impact**: Observe the chart at the bottom to see how increasing the number of annotators reduces model error.
+### Case Study: Lung Cancer Detection
+**Context:** Radiologists label chest X-rays as either **Cancerous (1)** or **Benign (0)**. Inconsistencies among radiologists can confuse AI models.
+
+**Objectives:**
+1.  **Quantify Agreement:** Use ICC to measure how consistently radiologists rate the images.
+2.  **Identify Ambiguity:** Find specific X-rays with high disagreement for potential re-review.
+3.  **Optimize Annotators:** Determine how many radiologists are needed to train a reliable AI model.
 """)
 
 # ----------------------------
 # Sidebar: Controls
 # ----------------------------
-st.sidebar.header("Control Panel")
+st.sidebar.header("Simulation Settings")
 
-# File upload with STRICT privacy warning in help text
+# File upload
 uploaded_file = st.sidebar.file_uploader(
-    "Upload Annotation CSV", 
+    "Upload Radiologist Annotations (CSV)", 
     type=["csv"],
-    help="Upload a CSV where rows are mutations and columns are researcher scores. STRICTLY NO PII/PHI DATA."
+    help="Upload a CSV where rows are Patient X-Rays and columns are Radiologist Diagnoses (0 or 1). STRICTLY NO PII/PHI."
 )
 
 # Simulation controls
-num_samples = st.sidebar.slider("Number of Mutations", 20, 500, 100, help="Total biological samples to be annotated.")
-raters = st.sidebar.slider("Number of Researchers", 2, 10, 5, help="Number of independent annotators providing scores.")
-noise_scale = st.sidebar.slider("Annotation Noise Level", 0.01, 0.5, 0.1, help="Simulates subjectivity or inconsistency among raters.")
+num_samples = st.sidebar.slider("Number of X-Rays", 50, 1000, 200, help="Total number of chest X-ray images in the dataset.")
+raters = st.sidebar.slider("Number of Radiologists", 2, 10, 5, help="Number of radiologists providing diagnoses.")
+disagreement_rate = st.sidebar.slider("Disagreement Rate", 0.0, 0.5, 0.2, help="Probability that a radiologist disagrees with the 'ground truth'.")
 
 # Model selection
-models = ["NumPy Linear Regression"]
-if SKLEARN_AVAILABLE:
-    models.append("Random Forest (scikit-learn)")
-model_choice = st.sidebar.selectbox("Predictive Model", models, help="Select the algorithm used to evaluate the consensus labels.")
+models = ["Random Forest Classifier"] if SKLEARN_AVAILABLE else ["(Scikit-learn not found)"]
+model_choice = st.sidebar.selectbox("AI Model", models, help="The machine learning model used to predict the diagnosis.")
 
 display_performance_metrics()
 
@@ -79,84 +81,145 @@ display_performance_metrics()
 # ----------------------------
 if uploaded_file is not None:
     annotation_data = pd.read_csv(uploaded_file)
-    st.subheader("Dataset Preview")
+    st.subheader("Uploaded Dataset Preview")
     st.dataframe(annotation_data.head())
 else:
+    # Simulate Ground Truth (hidden from raters)
     np.random.seed(42)
-    data = {"Mutation_ID": np.arange(1, num_samples + 1)}
+    ground_truth = np.random.randint(0, 2, num_samples)
+    
+    data = {"Xray_ID": np.arange(1, num_samples + 1)}
     for i in range(1, raters + 1):
-        data[f"Researcher_{i}"] = np.random.normal(0.5, noise_scale, num_samples)
+        # Generate ratings with some noise (disagreement)
+        ratings = ground_truth.copy()
+        # Flip labels based on disagreement rate
+        noise_mask = np.random.rand(num_samples) < disagreement_rate
+        ratings[noise_mask] = 1 - ratings[noise_mask] 
+        data[f"Radiologist_{i}"] = ratings
+        
     annotation_data = pd.DataFrame(data)
-    st.subheader("Simulated Dataset Preview")
-    st.info("The table below shows simulated researcher scores for each mutation.")
+    st.subheader("Simulated Radiologist Diagnoses")
+    st.info("0 = Benign, 1 = Cancerous. Rows represent individual X-rays.")
     st.dataframe(annotation_data.head())
 
-numeric_data = annotation_data.select_dtypes(include=[np.number])
-if numeric_data.shape[1] < 2:
-    st.error("Dataset must have at least one ID column and one annotator column.")
-    st.stop()
+# Extract numeric rating columns
+rating_cols = [c for c in annotation_data.columns if "Radiologist" in c or "Rater" in c or "Res" in c]
+if not rating_cols:
+    rating_cols = annotation_data.select_dtypes(include=[np.number]).columns.tolist()
+    if "Xray_ID" in rating_cols: rating_cols.remove("Xray_ID")
+
+numeric_data = annotation_data[rating_cols]
 
 # ----------------------------
-# ICC Calculation
+# ICC & Agreement Analysis
 # ----------------------------
 def icc(data):
-    mean_annotations = data.mean(axis=1)
-    rater_var = data.var(axis=1).mean()
-    total_var = mean_annotations.var()
-    return (total_var - rater_var) / total_var if total_var > 0 else 0
+    # Simplified ICC formulation for binary/consistency check
+    # Variance of mean ratings vs mean of variances
+    mean_ratings = data.mean(axis=1)
+    total_var = mean_ratings.var()
+    within_item_var = data.var(axis=1).mean()
+    return (total_var - within_item_var) / total_var if total_var > 0 else 0
 
-icc_value = icc(numeric_data.iloc[:, 1:])
-st.subheader("Inter-Rater Reliability Analysis")
-st.metric(
-    label="Intraclass Correlation Coefficient (ICC)", 
-    value=f"{icc_value:.4f}",
-    help="ICC measures the reliability of ratings or measurements. Values closer to 1.0 indicate high agreement."
-)
+icc_value = icc(numeric_data)
+
+col1, col2 = st.columns(2)
+with col1:
+    st.subheader("Inter-Rater Reliability")
+    st.metric(
+        label="ICC Score", 
+        value=f"{icc_value:.4f}",
+        help="A value near 1.0 means radiologists agree perfectly. Lower values indicate inconsistency."
+    )
+
+with col2:
+    st.subheader("Diagnosis Distribution")
+    # Show how many benign vs cancerous overall
+    all_ratings = numeric_data.values.flatten()
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.hist(all_ratings, bins=[0, 0.5, 1], rwidth=0.8, color='skyblue')
+    ax.set_xticks([0.25, 0.75])
+    ax.set_xticklabels(['Benign (0)', 'Cancerous (1)'])
+    st.pyplot(fig)
 
 # ----------------------------
-# Annotator Mean Chart
+# Identify Ambiguous Images
 # ----------------------------
-mean_scores = numeric_data.iloc[:, 1:].mean()
-st.subheader("Average Scores per Researcher")
-st.bar_chart(mean_scores)
+st.markdown("---")
+st.subheader("🔍 Review High-Disagreement Images")
+st.write("The X-rays below have the highest variance in diagnosis (e.g., split decisions). These are candidates for expert re-review.")
+
+# Calculate variance per row (image)
+row_variance = numeric_data.var(axis=1)
+annotation_data['Disagreement_Score'] = row_variance
+
+# Sort by highest disagreement
+high_disagreement = annotation_data.sort_values(by='Disagreement_Score', ascending=False).head(10)
+st.dataframe(high_disagreement.style.background_gradient(subset=['Disagreement_Score'], cmap='Reds'))
 
 # ----------------------------
-# Predictive Modeling logic
+# Model Performance Analysis
 # ----------------------------
-def numpy_linear_regression(X_train, y_train, X_test):
-    X_train_bias = np.c_[np.ones(X_train.shape[0]), X_train]
-    X_test_bias = np.c_[np.ones(X_test.shape[0]), X_test]
-    beta = np.linalg.pinv(X_train_bias.T @ X_train_bias) @ X_train_bias.T @ y_train
-    return X_test_bias @ beta
+st.markdown("---")
+st.subheader("🤖 AI Model Performance vs. Number of Radiologists")
+st.write("This curve shows how adding more radiologists to the consensus label improves the AI's ability to detect cancer.")
 
-st.subheader("Predictive Performance vs. Annotation Consensus")
-st.write("This analysis demonstrates how increasing the number of independent annotators impacts the Mean Squared Error (MSE) of the model.")
+if not SKLEARN_AVAILABLE:
+    st.error("scikit-learn is not installed. Please install it to run the model simulation.")
+else:
+    accuracies = []
+    num_raters_list = range(1, len(rating_cols) + 1)
+    
+    # We need a ground truth for testing. In simulation, we have it. 
+    # In uploaded data, we usually assume the 'majority vote' of ALL raters is the best proxy for ground truth.
+    if uploaded_file is None:
+        y_true_proxy = ground_truth 
+    else:
+        # Majority vote across all available raters as proxy
+        y_true_proxy = (numeric_data.mean(axis=1) > 0.5).astype(int)
 
-errors = []
-num_raters_list = range(1, numeric_data.shape[1])
+    # Train loop
+    progress_bar = st.progress(0)
+    for i, num in enumerate(num_raters_list):
+        # Select subset of raters
+        subset_cols = rating_cols[:num]
+        X_subset = numeric_data[subset_cols]
+        
+        # Create Consensus Label (Majority Vote) from this subset
+        # This is what the AI learns from
+        y_consensus = (X_subset.mean(axis=1) > 0.5).astype(int)
+        
+        # Features: For this simulation, we simulate "image features" that correlate with the true label
+        # In a real app, you'd load image embeddings. Here we simulate features with noise.
+        # We generate features based on the CONSENSUS label to simulate learning "what the doctors say"
+        np.random.seed(i) # varying seed
+        # Synthetic features: 10 features, some correlated with y_consensus
+        X_features = np.random.normal(loc=y_consensus[:, None], scale=1.5, size=(num_samples, 10))
+        
+        # Split
+        X_train, X_test, y_train, y_test = train_test_split(X_features, y_true_proxy, test_size=0.3, random_state=42)
+        
+        # Train
+        clf = RandomForestClassifier(n_estimators=50, random_state=42)
+        clf.fit(X_train, y_train)
+        preds = clf.predict(X_test)
+        
+        acc = accuracy_score(y_test, preds)
+        accuracies.append(acc)
+        progress_bar.progress((i + 1) / len(num_raters_list))
 
-for num in num_raters_list:
-    X = numeric_data.iloc[:, 1:num+1].values
-    y = X.mean(axis=1)
-    split = int(len(X) * 0.8)
-    X_train, X_test = X[:split], X[split:]
-    y_train, y_test = y[:split], y[split:]
+    # Plot
+    results_df = pd.DataFrame({"Count of Radiologists": list(num_raters_list), "Model Accuracy": accuracies})
+    st.line_chart(results_df, x="Count of Radiologists", y="Model Accuracy")
+    
+    st.info("""
+    **Interpretation:** * **Diminishing Returns:** Notice how the accuracy curve typically flattens out. The "elbow" of this curve suggests the optimal number of radiologists needed (cost-benefit).
+    * **Noise Reduction:** More radiologists = stable consensus = better training data for the AI.
+    """)
 
-    if model_choice == "NumPy Linear Regression":
-        preds = numpy_linear_regression(X_train, y_train, X_test)
-        mse = np.mean((y_test - preds) ** 2)
-    elif model_choice == "Random Forest (scikit-learn)":
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
-        model.fit(X_train, y_train)
-        preds = model.predict(X_test)
-        mse = mean_squared_error(y_test, preds)
-    errors.append(mse)
-
-results_df = pd.DataFrame({"Annotators": list(num_raters_list), "MSE": errors})
-st.line_chart(results_df, x="Annotators", y="MSE")
-
+st.markdown("---")
+st.markdown("### References")
 st.markdown("""
----
-### Scientific Context
-The **Intraclass Correlation Coefficient (ICC)** is a descriptive statistic that can be used when quantitative measurements are made on units that are organized into groups. It describes how strongly units in the same group resemble each other. In this app, it quantifies the degree to which different researchers agree on the mutation scores. 
+* **Inter-rater Reliability:** 
+* **Consensus Labeling:** Using majority vote or expert review to correct noisy labels.
 """)
